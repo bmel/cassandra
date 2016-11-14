@@ -218,6 +218,9 @@ public class DataResource implements IResource
         throw new AssertionError();
     }
 
+    /**
+     * @return All columns in this resource, if it's a table. Throws IllegalStateException if it's not a table-level resource.
+     */
     public Collection<ColumnDefinition> getTableColumns() {
         return Schema.instance.getCFMetaData(keyspace, getTable()).getColumnMetadata().values();
     }
