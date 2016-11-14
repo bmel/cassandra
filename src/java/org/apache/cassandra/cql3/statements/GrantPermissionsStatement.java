@@ -17,12 +17,21 @@
  */
 package org.apache.cassandra.cql3.statements;
 
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
+import org.apache.cassandra.auth.DataResource;
 import org.apache.cassandra.auth.IResource;
 import org.apache.cassandra.auth.Permission;
+import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.RoleName;
+import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.service.ClientState;
@@ -30,14 +39,58 @@ import org.apache.cassandra.transport.messages.ResultMessage;
 
 public class GrantPermissionsStatement extends PermissionsManagementStatement
 {
-    public GrantPermissionsStatement(Set<Permission> permissions, IResource resource, RoleName grantee)
+    private final Map<Permission, Set<ColumnIdentifier>> permissionColumns;
+
+    public GrantPermissionsStatement(Set<Permission> permissions,
+                                     Map<Permission, Set<ColumnIdentifier>> permissionColumns,
+                                     IResource resource,
+                                     RoleName grantee)
     {
         super(permissions, resource, grantee);
+        this.permissionColumns = permissionColumns == null ? Collections.emptyMap() : permissionColumns;
+    }
+
+    public void validate(ClientState state) throws RequestValidationException
+    {
+        super.validate(state);
+        validateColumnsExist();
+    }
+
+    private void validateColumnsExist()
+    {
+        if (!permissionColumns.isEmpty())
+        {
+            if (resource instanceof DataResource)
+            {
+                DataResource dataResource = (DataResource) resource;
+                Collection<ColumnDefinition> columnDefinitions = dataResource.getTableColumns();
+                Set<ColumnIdentifier> existingColumns = columnDefinitions.stream().map(c -> c.name).collect(Collectors.toSet());
+
+                for (Permission permission : permissions)
+                {
+                    Set<ColumnIdentifier> requestedColumns = permissionColumns.get(permission);
+                    requestedColumns.removeAll(existingColumns);
+                    if (!requestedColumns.isEmpty())
+                    {
+                        throw new InvalidRequestException(String.format("Column(s) %s do not exist in table %s",
+                                                                        requestedColumns,
+                                                                        resource));
+                    }
+                }
+            }
+            else
+            {
+                throw new InvalidRequestException("Column lists are only applicable to permissions on tables");
+            }
+        }
     }
 
     public ResultMessage execute(ClientState state) throws RequestValidationException, RequestExecutionException
     {
         DatabaseDescriptor.getAuthorizer().grant(state.getUser(), permissions, resource, grantee);
+
+        // TODO: handle columns, if any
+
         return null;
     }
 }

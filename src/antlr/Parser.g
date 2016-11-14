@@ -909,15 +909,29 @@ truncateStatement returns [TruncateStatement stmt]
 
 /**
  * GRANT <permission> ON <resource> TO <rolename>
+ * Example with columns:
+ * GRANT SELECT(c1, c2) ON ks.t1 TO role1
  */
 grantPermissionsStatement returns [GrantPermissionsStatement stmt]
+    @init {
+        Set<Permission> perms = null;
+        Map<Permission, Set<ColumnIdentifier>> permCols = null;
+    }
     : K_GRANT
-          permissionOrAll
+          (
+              restrictedPermission { permCols = $restrictedPermission.permCols; perms = permCols.keySet(); }
+              | permissionOrAll { perms = $permissionOrAll.perms; }
+          )
       K_ON
           resource
       K_TO
           grantee=userOrRoleName
-      { $stmt = new GrantPermissionsStatement(filterPermissions($permissionOrAll.perms, $resource.res), $resource.res, grantee); }
+      {
+        Set<Permission> applicablePerms = filterPermissions(perms, $resource.res);
+        if (permCols != null )
+            permCols.keySet().retainAll(applicablePerms);
+        $stmt = new GrantPermissionsStatement(applicablePerms, permCols, $resource.res, grantee);
+      }
     ;
 
 /**
@@ -977,6 +991,29 @@ permission returns [Permission perm]
 permissionOrAll returns [Set<Permission> perms]
     : K_ALL ( K_PERMISSIONS )?       { $perms = Permission.ALL; }
     | p=permission ( K_PERMISSION )? { $perms = EnumSet.of($p.perm); }
+    ;
+
+restrictedPermission returns [Map<Permission, Set<ColumnIdentifier>> permCols]
+    @init {
+        permCols = new LinkedHashMap<>();
+    }
+    :
+    p=(K_SELECT | K_MODIFY) columnNameList
+    {
+        Permission perm = Permission.valueOf($p.text.toUpperCase());
+        permCols.put(perm, $columnNameList.cols);
+    }
+    ;
+
+columnNameList returns [Set<ColumnIdentifier> cols]
+    @init {
+        cols = new LinkedHashSet<>();
+    }
+    :
+    '('
+      c1=ident { cols.add($c1.id); }
+      ( ',' cN=ident { cols.add($cN.id); } )*
+    ')'
     ;
 
 resource returns [IResource res]
