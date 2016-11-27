@@ -69,7 +69,7 @@ public class CassandraAuthorizer implements IAuthorizer
      * Enumerates constrainable {@link Permission}s and relates them to the columns in the role permission table that
      * hold the constraining information, such as a set of table columns.
      */
-    public enum Constraint {
+    enum Constraint {
         MODIFIABLE(Permission.MODIFY, "modifiable_columns"),
         SELECTABLE(Permission.SELECT, "selectable_columns");
 
@@ -112,7 +112,7 @@ public class CassandraAuthorizer implements IAuthorizer
             return new PermissionSet(resource.applicablePermissions());
 
         Set<Permission> permissions = EnumSet.noneOf(Permission.class);
-        Map<Permission, Set<String>> permissionColumns = new HashMap<>();
+        Map<Permission, Set<String>> permissionColumns = new EnumMap<>(Permission.class);
         try
         {
             for (RoleResource role: user.getRoles())
@@ -220,7 +220,6 @@ public class CassandraAuthorizer implements IAuthorizer
         catch (RequestExecutionException | RequestValidationException e)
         {
             logger.warn("CassandraAuthorizer failed to revoke all permissions on {}: {}", droppedResource, e);
-            return;
         }
     }
 
@@ -305,8 +304,6 @@ public class CassandraAuthorizer implements IAuthorizer
         String permsColClause = "";
         if (!permissionSpec.getPermissionColumns().isEmpty())
         {
-            tempRemoveConstraintColumnsFromPermissionTable();
-
             StringBuilder sb = new StringBuilder();
             for (Constraint constraint : Constraint.values())
                 appendConstraintClause(permissionSpec, constraint, op, sb);
@@ -336,32 +333,6 @@ public class CassandraAuthorizer implements IAuthorizer
                                             op,
                                             "$$" + StringUtils.join(columns, "$$,$$") + "$$"));
             }
-        }
-    }
-
-    private void tempRemoveConstraintColumnsFromPermissionTable()
-    {
-        dropColumnFromRolePermissionTable(Constraint.MODIFIABLE.getColumnName());
-        dropColumnFromRolePermissionTable(Constraint.SELECTABLE.getColumnName());
-    }
-
-    private void dropColumnFromRolePermissionTable(String colName)
-    {
-        try
-        {
-            // TODO can the performer have insufficient rights for adding a column to 'role_permissions'? And if so - what now?
-            process(String.format("ALTER TABLE %s.%s DROP %s",
-                                  SchemaConstants.AUTH_KEYSPACE_NAME,
-                                  AuthKeyspace.ROLE_PERMISSIONS,
-                                  colName));
-            logger.info(String.format("CassandraAuthorizer removed column %s",
-                                      SchemaConstants.AUTH_KEYSPACE_NAME,
-                                      AuthKeyspace.ROLE_PERMISSIONS,
-                                      colName));
-        }
-        catch (InvalidRequestException e)
-        {
-            logger.warn("CassandraAuthorizer failed to upgrade permission schema", e);
         }
     }
 
