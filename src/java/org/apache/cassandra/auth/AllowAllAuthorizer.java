@@ -33,7 +33,7 @@ public class AllowAllAuthorizer implements IAuthorizer
         return resource.applicablePermissions();
     }
 
-    public void grant(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource to)
+    public void grant(AuthenticatedUser performer, PermissionSpec permissionSpec)
     {
         throw new UnsupportedOperationException("GRANT operation is not supported by AllowAllAuthorizer");
     }

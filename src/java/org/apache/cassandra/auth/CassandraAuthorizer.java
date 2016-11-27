@@ -19,11 +19,13 @@ package org.apache.cassandra.auth;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,6 +69,9 @@ public class CassandraAuthorizer implements IAuthorizer
     public static final String USERNAME = "username";
     public static final String USER_PERMISSIONS = "permissions";
 
+    // prevents unnecessary on-demand schema upgrade attempts, once done on this node
+    private static final AtomicBoolean isSchemaKnownToBeRestrictableByColumns = new AtomicBoolean(false);
+
     private SelectStatement authorizeRoleStatement;
     private SelectStatement legacyAuthorizeRoleStatement;
 
@@ -100,17 +105,17 @@ public class CassandraAuthorizer implements IAuthorizer
         return permissions;
     }
 
-    public void grant(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource grantee)
+    public void grant(AuthenticatedUser performer, PermissionSpec permissionSpec)
     throws RequestValidationException, RequestExecutionException
     {
-        modifyRolePermissions(permissions, resource, grantee, "+");
-        addLookupEntry(resource, grantee);
+        modifyRolePermissions(permissionSpec, "+");
+        addLookupEntry(permissionSpec.getResource(), permissionSpec.getGrantee());
     }
 
     public void revoke(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource revokee)
     throws RequestValidationException, RequestExecutionException
     {
-        modifyRolePermissions(permissions, resource, revokee, "-");
+        modifyRolePermissions(new PermissionSpec(permissions, resource, revokee), "-");
         removeLookupEntry(resource, revokee);
     }
 
@@ -240,16 +245,84 @@ public class CassandraAuthorizer implements IAuthorizer
     }
 
     // Adds or removes permissions from a role_permissions table (adds if op is "+", removes if op is "-")
-    private void modifyRolePermissions(Set<Permission> permissions, IResource resource, RoleResource role, String op)
+    private void modifyRolePermissions(PermissionSpec permissionSpec, String op)
             throws RequestExecutionException
     {
-        process(String.format("UPDATE %s.%s SET permissions = permissions %s {%s} WHERE role = '%s' AND resource = '%s'",
+
+        process(String.format("UPDATE %s.%s SET permissions = permissions %s {%s} %s WHERE role = '%s' AND resource = '%s'",
                               SchemaConstants.AUTH_KEYSPACE_NAME,
                               AuthKeyspace.ROLE_PERMISSIONS,
                               op,
-                              "'" + StringUtils.join(permissions, "','") + "'",
-                              escape(role.getRoleName()),
-                              escape(resource.getName())));
+                              "'" + StringUtils.join(permissionSpec.getPermissions(), "','") + "'",
+                              makeRestrictionClauses(permissionSpec, op),
+                              escape(permissionSpec.getGrantee().getRoleName()),
+                              escape(permissionSpec.getResource().getName())));
+    }
+
+    private String makeRestrictionClauses(PermissionSpec permissionSpec, String op)
+    {
+        String permsColClause = "";
+        if (!permissionSpec.getPermissionColumns().isEmpty())
+        {
+            ensureSchemaUpgradedForColumnPermissions();
+
+            StringBuilder sb = new StringBuilder();
+            appendRestrictionClause(permissionSpec, Permission.SELECT, AuthKeyspace.ROLE_PERMISSIONS_SELECTABLE_COLUMNS, op, sb);
+            appendRestrictionClause(permissionSpec, Permission.MODIFY, AuthKeyspace.ROLE_PERMISSIONS_MODIFIABLE_COLUMNS, op, sb);
+            permsColClause = sb.toString();
+        }
+        return permsColClause;
+    }
+
+    private void appendRestrictionClause(PermissionSpec permissionSpec, Permission permission, String accessColumnName, String op, StringBuilder target)
+    {
+        if (permissionSpec.getPermissions().contains(permission))
+        {
+            Set<ColumnIdentifier> columns = permissionSpec.getPermissionColumns().get(permission);
+            if (CollectionUtils.isEmpty(columns)) // means: no restrictions on columns, for this permission
+            {
+                // null out column restrictions for the supplied permission:
+                target.append(String.format(", %s = {}", accessColumnName));
+            }
+            else
+            {
+                // add or remove column restriction for the specified columns:
+                target.append(String.format(", %s = %s %s {%s}",
+                                            accessColumnName,
+                                            accessColumnName,
+                                            op,
+                                            "$$" + StringUtils.join(columns, "$$,$$") + "$$"));
+            }
+        }
+    }
+
+    private void ensureSchemaUpgradedForColumnPermissions()
+    {
+        if (!isSchemaKnownToBeRestrictableByColumns.get()) {
+            addColumnToRolePermissionTable(AuthKeyspace.ROLE_PERMISSIONS_SELECTABLE_COLUMNS);
+            addColumnToRolePermissionTable(AuthKeyspace.ROLE_PERMISSIONS_MODIFIABLE_COLUMNS);
+            isSchemaKnownToBeRestrictableByColumns.set(true);
+        }
+    }
+
+    private void addColumnToRolePermissionTable(String colName)
+    {
+        try
+        {
+            // TODO can the performer have insufficient rights for adding a column to 'role_permissions'? And if so - what now?
+            process(String.format("ALTER TABLE %s.%s ADD %s set<text>",
+                                  SchemaConstants.AUTH_KEYSPACE_NAME,
+                                  AuthKeyspace.ROLE_PERMISSIONS,
+                                  colName));
+            logger.info(String.format("CassandraAuthorizer upgraded %s.%s by adding permission constraint column %s",
+                                      SchemaConstants.AUTH_KEYSPACE_NAME,
+                                      AuthKeyspace.ROLE_PERMISSIONS,
+                                      colName));
+        }
+        catch (InvalidRequestException e)
+        {
+            logger.warn("CassandraAuthorizer failed to upgrade permission schema", e);
+        }
     }
 
     // Removes an entry from the inverted index table (from resource -> role with defined permissions)

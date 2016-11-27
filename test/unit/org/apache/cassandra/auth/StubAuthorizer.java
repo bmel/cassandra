@@ -43,18 +43,18 @@ public class StubAuthorizer implements IAuthorizer
     }
 
     public void grant(AuthenticatedUser performer,
-                      Set<Permission> permissions,
-                      IResource resource,
-                      RoleResource grantee) throws RequestValidationException, RequestExecutionException
+                      PermissionSpec permissionSpec) throws RequestValidationException, RequestExecutionException
     {
-        Pair<String, IResource> key = Pair.create(grantee.getRoleName(), resource);
+        Pair<String, IResource> key = Pair.create(permissionSpec.getGrantee().getRoleName(), permissionSpec.getResource());
         Set<Permission> perms = userPermissions.get(key);
         if (null == perms)
         {
             perms = new HashSet<>();
             userPermissions.put(key, perms);
         }
-        perms.addAll(permissions);
+        perms.addAll(permissionSpec.getPermissions());
+
+        // TODO: keep track of any permission constraints as well: permissionSpec#getPermissionColumns()
     }
 
     public void revoke(AuthenticatedUser performer,

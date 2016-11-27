@@ -145,6 +145,14 @@ public class RoleSyntaxTest extends CQLTester
         assertInvalidSyntax("GRANT EXECUTE(c1) ON ks.t1 TO r1");
     }
 
+    //@Test // TODO Enable and complete when unit test framework allows to create roles and assign permissions
+    public void grantColumnPermissionsTest() throws Throwable
+    {
+        createTable("CREATE TABLE %s (key text PRIMARY KEY, c1 text, c2 text)");
+        execute("GRANT SELECT(c1) ON %s TO r1");
+        assertInvalidMessage("todo", "GRANT SELECT(nosuchcolumn) ON %s TO r1");
+    }
+
     @Test
     public void listPermissionsSyntaxTest() throws Throwable
     {

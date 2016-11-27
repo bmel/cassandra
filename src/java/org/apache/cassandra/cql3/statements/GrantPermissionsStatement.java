@@ -19,7 +19,6 @@ package org.apache.cassandra.cql3.statements;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -27,6 +26,7 @@ import java.util.stream.Collectors;
 import org.apache.cassandra.auth.DataResource;
 import org.apache.cassandra.auth.IResource;
 import org.apache.cassandra.auth.Permission;
+import org.apache.cassandra.auth.PermissionSpec;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.ColumnIdentifier;
@@ -63,17 +63,19 @@ public class GrantPermissionsStatement extends PermissionsManagementStatement
             if (resource instanceof DataResource)
             {
                 DataResource dataResource = (DataResource) resource;
+                // Throws exception when not a table:
                 Collection<ColumnDefinition> columnDefinitions = dataResource.getTableColumns();
-                Set<ColumnIdentifier> existingColumns = columnDefinitions.stream().map(c -> c.name).collect(Collectors.toSet());
-
+                Set<ColumnIdentifier> existingColumns = columnDefinitions.stream()
+                                                                         .map(c -> c.name).collect(Collectors.toSet());
                 for (Permission permission : permissions)
                 {
-                    Set<ColumnIdentifier> requestedColumns = permissionColumns.get(permission);
-                    requestedColumns.removeAll(existingColumns);
-                    if (!requestedColumns.isEmpty())
+                    Set<ColumnIdentifier> missingColumns = permissionColumns.get(permission).stream()
+                                                                            .filter(c -> !existingColumns.contains(c))
+                                                                            .collect(Collectors.toSet());
+                    if (!missingColumns.isEmpty())
                     {
                         throw new InvalidRequestException(String.format("Column(s) %s do not exist in table %s",
-                                                                        requestedColumns,
+                                                                        missingColumns,
                                                                         resource));
                     }
                 }
@@ -87,10 +89,9 @@ public class GrantPermissionsStatement extends PermissionsManagementStatement
 
     public ResultMessage execute(ClientState state) throws RequestValidationException, RequestExecutionException
     {
-        DatabaseDescriptor.getAuthorizer().grant(state.getUser(), permissions, resource, grantee);
-
-        // TODO: handle columns, if any
-
+        DatabaseDescriptor.getAuthorizer().grant(state.getUser(),
+                                                 new PermissionSpec(permissions, permissionColumns, resource, grantee));
         return null;
     }
+
 }
