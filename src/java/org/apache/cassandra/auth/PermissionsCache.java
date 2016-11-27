@@ -23,7 +23,7 @@ import java.util.concurrent.ExecutionException;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.utils.Pair;
 
-public class PermissionsCache extends AuthCache<Pair<AuthenticatedUser, IResource>, Set<Permission>> implements PermissionsCacheMBean
+public class PermissionsCache extends AuthCache<Pair<AuthenticatedUser, IResource>, PermissionSet> implements PermissionsCacheMBean
 {
     public PermissionsCache(IAuthorizer authorizer)
     {
@@ -38,7 +38,7 @@ public class PermissionsCache extends AuthCache<Pair<AuthenticatedUser, IResourc
               () -> DatabaseDescriptor.getAuthorizer().requireAuthorization());
     }
 
-    public Set<Permission> getPermissions(AuthenticatedUser user, IResource resource)
+    public PermissionSet getPermissions(AuthenticatedUser user, IResource resource)
     {
         try
         {

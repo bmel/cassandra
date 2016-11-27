@@ -28,9 +28,9 @@ public class AllowAllAuthorizer implements IAuthorizer
         return false;
     }
 
-    public Set<Permission> authorize(AuthenticatedUser user, IResource resource)
+    public PermissionSet authorize(AuthenticatedUser user, IResource resource)
     {
-        return resource.applicablePermissions();
+        return new PermissionSet(resource.applicablePermissions());
     }
 
     public void grant(AuthenticatedUser performer, PermissionSpec permissionSpec)

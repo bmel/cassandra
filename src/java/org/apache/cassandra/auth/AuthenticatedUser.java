@@ -99,7 +99,7 @@ public class AuthenticatedUser
         return Roles.getRoles(role);
     }
 
-    public Set<Permission> getPermissions(IResource resource)
+    public PermissionSet getPermissions(IResource resource)
     {
         return permissionsCache.getPermissions(this, resource);
     }

@@ -19,7 +19,6 @@ package org.apache.cassandra.auth;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableSet;
@@ -62,15 +61,41 @@ public class CassandraAuthorizer implements IAuthorizer
     private static final Logger logger = LoggerFactory.getLogger(CassandraAuthorizer.class);
 
     private static final String ROLE = "role";
+
     private static final String RESOURCE = "resource";
     private static final String PERMISSIONS = "permissions";
+
+    /**
+     * Enumerates constrainable {@link Permission}s and relates them to the columns in the role permission table that
+     * hold the constraining information, such as a set of table columns.
+     */
+    public enum Constraint {
+        MODIFIABLE(Permission.MODIFY, "modifiable_columns"),
+        SELECTABLE(Permission.SELECT, "selectable_columns");
+
+        private final Permission permission;
+        private final String columnName;
+
+        Constraint(Permission permission, String columnName)
+        {
+            this.permission = permission;
+            this.columnName = columnName;
+        }
+
+        public Permission getPermission()
+        {
+            return permission;
+        }
+
+        public String getColumnName()
+        {
+            return columnName;
+        }
+    }
 
     // used during upgrades to perform authz on mixed clusters
     public static final String USERNAME = "username";
     public static final String USER_PERMISSIONS = "permissions";
-
-    // prevents unnecessary on-demand schema upgrade attempts, once done on this node
-    private static final AtomicBoolean isSchemaKnownToBeRestrictableByColumns = new AtomicBoolean(false);
 
     private SelectStatement authorizeRoleStatement;
     private SelectStatement legacyAuthorizeRoleStatement;
@@ -81,16 +106,17 @@ public class CassandraAuthorizer implements IAuthorizer
 
     // Returns every permission on the resource granted to the user either directly
     // or indirectly via roles granted to the user.
-    public Set<Permission> authorize(AuthenticatedUser user, IResource resource)
+    public PermissionSet authorize(AuthenticatedUser user, IResource resource)
     {
         if (user.isSuper())
-            return resource.applicablePermissions();
+            return new PermissionSet(resource.applicablePermissions());
 
         Set<Permission> permissions = EnumSet.noneOf(Permission.class);
+        Map<Permission, Set<String>> permissionColumns = new HashMap<>();
         try
         {
             for (RoleResource role: user.getRoles())
-                addPermissionsForRole(permissions, resource, role);
+                addPermissionsForRole(permissions, permissionColumns, resource, role);
         }
         catch (RequestValidationException e)
         {
@@ -102,7 +128,7 @@ public class CassandraAuthorizer implements IAuthorizer
             throw new RuntimeException(e);
         }
 
-        return permissions;
+        return new PermissionSet(permissions, permissionColumns);
     }
 
     public void grant(AuthenticatedUser performer, PermissionSpec permissionSpec)
@@ -213,7 +239,10 @@ public class CassandraAuthorizer implements IAuthorizer
     }
 
     // Add every permission on the resource granted to the role
-    private void addPermissionsForRole(Set<Permission> permissions, IResource resource, RoleResource role)
+    private void addPermissionsForRole(Set<Permission> permissions,
+                                       Map<Permission, Set<String>> permissionColumns,
+                                       IResource resource,
+                                       RoleResource role)
     throws RequestExecutionException, RequestValidationException
     {
         QueryOptions options = QueryOptions.forInternalCalls(ConsistencyLevel.LOCAL_ONE,
@@ -241,6 +270,18 @@ public class CassandraAuthorizer implements IAuthorizer
             {
                 permissions.add(Permission.valueOf(perm));
             }
+            addPermissionColumns(result, permissionColumns);
+        }
+    }
+
+    private void addPermissionColumns(UntypedResultSet result, Map<Permission, Set<String>> permissionColumnsOut)
+    {
+        for (Constraint constraint : Constraint.values())
+        {
+            Set<String> fetchedCols = result.one().getSet(constraint.columnName, UTF8Type.instance);
+            if (!CollectionUtils.isEmpty(fetchedCols)) {
+                permissionColumnsOut.put(constraint.getPermission(), fetchedCols);
+            }
         }
     }
 
@@ -254,67 +295,66 @@ public class CassandraAuthorizer implements IAuthorizer
                               AuthKeyspace.ROLE_PERMISSIONS,
                               op,
                               "'" + StringUtils.join(permissionSpec.getPermissions(), "','") + "'",
-                              makeRestrictionClauses(permissionSpec, op),
+                              makeConstraintClauses(permissionSpec, op),
                               escape(permissionSpec.getGrantee().getRoleName()),
                               escape(permissionSpec.getResource().getName())));
     }
 
-    private String makeRestrictionClauses(PermissionSpec permissionSpec, String op)
+    private String makeConstraintClauses(PermissionSpec permissionSpec, String op)
     {
         String permsColClause = "";
         if (!permissionSpec.getPermissionColumns().isEmpty())
         {
-            ensureSchemaUpgradedForColumnPermissions();
+            tempRemoveConstraintColumnsFromPermissionTable();
 
             StringBuilder sb = new StringBuilder();
-            appendRestrictionClause(permissionSpec, Permission.SELECT, AuthKeyspace.ROLE_PERMISSIONS_SELECTABLE_COLUMNS, op, sb);
-            appendRestrictionClause(permissionSpec, Permission.MODIFY, AuthKeyspace.ROLE_PERMISSIONS_MODIFIABLE_COLUMNS, op, sb);
+            for (Constraint constraint : Constraint.values())
+                appendConstraintClause(permissionSpec, constraint, op, sb);
             permsColClause = sb.toString();
         }
         return permsColClause;
     }
 
-    private void appendRestrictionClause(PermissionSpec permissionSpec, Permission permission, String accessColumnName, String op, StringBuilder target)
+    private void appendConstraintClause(PermissionSpec permissionSpec, Constraint constraint, String op, StringBuilder target)
     {
+        Permission permission = constraint.getPermission();
         if (permissionSpec.getPermissions().contains(permission))
         {
+            String constraintColumnName = constraint.getColumnName();
             Set<ColumnIdentifier> columns = permissionSpec.getPermissionColumns().get(permission);
-            if (CollectionUtils.isEmpty(columns)) // means: no restrictions on columns, for this permission
+            if (CollectionUtils.isEmpty(columns)) // means: no constraints on columns, for this permission
             {
-                // null out column restrictions for the supplied permission:
-                target.append(String.format(", %s = {}", accessColumnName));
+                // null out column constraints for the supplied permission:
+                target.append(String.format(", %s = {}", constraintColumnName));
             }
             else
             {
-                // add or remove column restriction for the specified columns:
+                // add or remove column constraints for the specified columns:
                 target.append(String.format(", %s = %s %s {%s}",
-                                            accessColumnName,
-                                            accessColumnName,
+                                            constraintColumnName,
+                                            constraintColumnName,
                                             op,
                                             "$$" + StringUtils.join(columns, "$$,$$") + "$$"));
             }
         }
     }
 
-    private void ensureSchemaUpgradedForColumnPermissions()
+    private void tempRemoveConstraintColumnsFromPermissionTable()
     {
-        if (!isSchemaKnownToBeRestrictableByColumns.get()) {
-            addColumnToRolePermissionTable(AuthKeyspace.ROLE_PERMISSIONS_SELECTABLE_COLUMNS);
-            addColumnToRolePermissionTable(AuthKeyspace.ROLE_PERMISSIONS_MODIFIABLE_COLUMNS);
-            isSchemaKnownToBeRestrictableByColumns.set(true);
-        }
+        dropColumnFromRolePermissionTable(Constraint.MODIFIABLE.getColumnName());
+        dropColumnFromRolePermissionTable(Constraint.SELECTABLE.getColumnName());
     }
 
-    private void addColumnToRolePermissionTable(String colName)
+    private void dropColumnFromRolePermissionTable(String colName)
     {
         try
         {
             // TODO can the performer have insufficient rights for adding a column to 'role_permissions'? And if so - what now?
-            process(String.format("ALTER TABLE %s.%s ADD %s set<text>",
+            process(String.format("ALTER TABLE %s.%s DROP %s",
                                   SchemaConstants.AUTH_KEYSPACE_NAME,
                                   AuthKeyspace.ROLE_PERMISSIONS,
                                   colName));
-            logger.info(String.format("CassandraAuthorizer upgraded %s.%s by adding permission constraint column %s",
+            logger.info(String.format("CassandraAuthorizer removed column %s",
                                       SchemaConstants.AUTH_KEYSPACE_NAME,
                                       AuthKeyspace.ROLE_PERMISSIONS,
                                       colName));
@@ -459,7 +499,9 @@ public class CassandraAuthorizer implements IAuthorizer
 
     private SelectStatement prepare(String entityname, String permissionsTable)
     {
-        String query = String.format("SELECT permissions FROM %s.%s WHERE %s = ? AND resource = ?",
+        String query = String.format("SELECT permissions, %s, %s FROM %s.%s WHERE %s = ? AND resource = ?",
+                                     Constraint.MODIFIABLE.getColumnName(),
+                                     Constraint.SELECTABLE.getColumnName(),
                                      SchemaConstants.AUTH_KEYSPACE_NAME,
                                      permissionsTable,
                                      entityname);

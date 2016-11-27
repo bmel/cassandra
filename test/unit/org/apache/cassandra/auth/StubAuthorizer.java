@@ -35,11 +35,11 @@ public class StubAuthorizer implements IAuthorizer
         userPermissions.clear();
     }
 
-    public Set<Permission> authorize(AuthenticatedUser user, IResource resource)
+    public PermissionSet authorize(AuthenticatedUser user, IResource resource)
     {
         Pair<String, IResource> key = Pair.create(user.getName(), resource);
         Set<Permission> perms = userPermissions.get(key);
-        return perms != null ? perms : Collections.emptySet();
+        return new PermissionSet(perms != null ? perms : Collections.emptySet());
     }
 
     public void grant(AuthenticatedUser performer,

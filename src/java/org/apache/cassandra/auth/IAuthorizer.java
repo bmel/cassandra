@@ -47,9 +47,10 @@ public interface IAuthorizer
      *
      * @param user Authenticated user requesting authorization.
      * @param resource Resource for which the authorization is being requested. @see DataResource.
-     * @return Set of permissions of the user on the resource. Should never return null. Use Permission.NONE instead.
+     * @return Set of permissions (and their constraints) of the user on the resource.
+     * Should never return null. Use an empty {@link PermissionSet} instead.
      */
-    Set<Permission> authorize(AuthenticatedUser user, IResource resource);
+    PermissionSet authorize(AuthenticatedUser user, IResource resource);
 
     /**
      * Grants a set of permissions on a resource to a role.

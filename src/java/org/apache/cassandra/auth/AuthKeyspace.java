@@ -33,11 +33,7 @@ public final class AuthKeyspace
 
     public static final String ROLES = "roles";
     public static final String ROLE_MEMBERS = "role_members";
-
     public static final String ROLE_PERMISSIONS = "role_permissions";
-    public static final String ROLE_PERMISSIONS_SELECTABLE_COLUMNS = "selectable_columns";
-    public static final String ROLE_PERMISSIONS_MODIFIABLE_COLUMNS = "modifiable_columns";
-
     public static final String RESOURCE_ROLE_INDEX = "resource_role_permissons_index";
 
     public static final long SUPERUSER_SETUP_DELAY = Long.getLong("cassandra.superuser_setup_delay_ms", 10000);
@@ -68,8 +64,8 @@ public final class AuthKeyspace
                 + "role text,"
                 + "resource text,"
                 + "permissions set<text>,"
-                + ROLE_PERMISSIONS_SELECTABLE_COLUMNS + " set<text>,"
-                + ROLE_PERMISSIONS_MODIFIABLE_COLUMNS + " set<text>,"
+                + CassandraAuthorizer.Constraint.MODIFIABLE.getColumnName() + " set<text>,"
+                + CassandraAuthorizer.Constraint.SELECTABLE.getColumnName() + " set<text>,"
                 + "PRIMARY KEY(role, resource))");
 
     private static final CFMetaData ResourceRoleIndex =
