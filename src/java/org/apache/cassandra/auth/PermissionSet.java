@@ -22,6 +22,8 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.commons.collections.CollectionUtils;
+
 /**
  * Encapsulates a set of {@link Permission}, along with any permission constraints.
  */
@@ -30,13 +32,13 @@ public class PermissionSet
     private final Set<Permission> permissions;
     private final Map<Permission, Set<String>> permissionColumns;
 
-    public PermissionSet(Set<Permission> permissions, Map<Permission, Set<String>> permissionColumns)
+    PermissionSet(Set<Permission> permissions, Map<Permission, Set<String>> permissionColumns)
     {
         this.permissions = permissions;
         this.permissionColumns = permissionColumns;
     }
 
-    public PermissionSet(Set<Permission> permissions)
+    PermissionSet(Set<Permission> permissions)
     {
         this(permissions, Collections.emptyMap());
     }
@@ -57,5 +59,10 @@ public class PermissionSet
                "permissions=" + permissions +
                ", permissionColumns=" + permissionColumns +
                '}';
+    }
+
+    public boolean hasColumnConstraint(Permission perm)
+    {
+        return CollectionUtils.isNotEmpty(permissionColumns.get(perm));
     }
 }

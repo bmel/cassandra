@@ -207,21 +207,21 @@ public abstract class ModificationStatement implements CQLStatement
 
     public void checkAccess(ClientState state) throws InvalidRequestException, UnauthorizedException
     {
-        state.hasColumnFamilyAccess(cfm, Permission.MODIFY);
+        state.hasColumnFamilyAccess(cfm, Permission.MODIFY, null);
 
         // CAS updates can be used to simulate a SELECT query, so should require Permission.SELECT as well.
         if (hasConditions())
-            state.hasColumnFamilyAccess(cfm, Permission.SELECT);
+            state.hasColumnFamilyAccess(cfm, Permission.SELECT, null);
 
         // MV updates need to get the current state from the table, and might update the views
         // Require Permission.SELECT on the base table, and Permission.MODIFY on the views
         Iterator<ViewDefinition> views = View.findAll(keyspace(), columnFamily()).iterator();
         if (views.hasNext())
         {
-            state.hasColumnFamilyAccess(cfm, Permission.SELECT);
+            state.hasColumnFamilyAccess(cfm, Permission.SELECT, null);
             do
             {
-                state.hasColumnFamilyAccess(views.next().metadata, Permission.MODIFY);
+                state.hasColumnFamilyAccess(views.next().metadata, Permission.MODIFY, null);
             } while (views.hasNext());
         }
 

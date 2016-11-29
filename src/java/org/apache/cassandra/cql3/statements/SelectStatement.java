@@ -213,11 +213,11 @@ public class SelectStatement implements CQLStatement
         {
             CFMetaData baseTable = View.findBaseTable(keyspace(), columnFamily());
             if (baseTable != null)
-                state.hasColumnFamilyAccess(baseTable, Permission.SELECT);
+                state.hasColumnFamilyAccess(baseTable, Permission.SELECT, selection.getColumns());
         }
         else
         {
-            state.hasColumnFamilyAccess(cfm, Permission.SELECT);
+            state.hasColumnFamilyAccess(cfm, Permission.SELECT, selection.getColumns());
         }
 
         for (Function function : getFunctions())

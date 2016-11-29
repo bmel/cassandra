@@ -21,14 +21,18 @@ import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
+import org.apache.commons.collections.CollectionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.auth.*;
 import org.apache.cassandra.config.CFMetaData;
+import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.config.SchemaConstants;
@@ -284,23 +288,23 @@ public class ClientState
 
     public void hasKeyspaceAccess(String keyspace, Permission perm) throws UnauthorizedException, InvalidRequestException
     {
-        hasAccess(keyspace, perm, DataResource.keyspace(keyspace));
+        hasAccess(keyspace, perm, DataResource.keyspace(keyspace), null);
     }
 
     public void hasColumnFamilyAccess(String keyspace, String columnFamily, Permission perm)
     throws UnauthorizedException, InvalidRequestException
     {
         ThriftValidation.validateColumnFamily(keyspace, columnFamily);
-        hasAccess(keyspace, perm, DataResource.table(keyspace, columnFamily));
+        hasAccess(keyspace, perm, DataResource.table(keyspace, columnFamily), null);
     }
 
-    public void hasColumnFamilyAccess(CFMetaData cfm, Permission perm)
+    public void hasColumnFamilyAccess(CFMetaData cfm, Permission perm, List<ColumnDefinition> accessedColumns)
     throws UnauthorizedException, InvalidRequestException
     {
-        hasAccess(cfm.ksName, perm, cfm.resource);
+        hasAccess(cfm.ksName, perm, cfm.resource, accessedColumns);
     }
 
-    private void hasAccess(String keyspace, Permission perm, DataResource resource)
+    private void hasAccess(String keyspace, Permission perm, DataResource resource, List<ColumnDefinition> accessedColumns)
     throws UnauthorizedException, InvalidRequestException
     {
         validateKeyspace(keyspace);
@@ -313,10 +317,20 @@ public class ClientState
         if (PROTECTED_AUTH_RESOURCES.contains(resource))
             if ((perm == Permission.CREATE) || (perm == Permission.ALTER) || (perm == Permission.DROP))
                 throw new UnauthorizedException(String.format("%s schema is protected", resource));
-        ensureHasPermission(perm, resource);
+        ensureHasPermission(perm, resource, accessedColumns);
     }
 
+    /**
+     * Convenience method, redirecting to {@link #ensureHasPermission(Permission, IResource, List)}
+     * with 'null' for 'accessedColumns', for the numerous callers where column constraints
+     * are not applicable.
+     */
     public void ensureHasPermission(Permission perm, IResource resource) throws UnauthorizedException
+    {
+        ensureHasPermission(perm, resource, null);
+    }
+
+    private void ensureHasPermission(Permission perm, IResource resource, List<ColumnDefinition> accessedColumns) throws UnauthorizedException
     {
         if (!DatabaseDescriptor.getAuthorizer().requireAuthorization())
             return;
@@ -326,7 +340,7 @@ public class ClientState
             if (((FunctionResource)resource).getKeyspace().equals(SchemaConstants.SYSTEM_KEYSPACE_NAME))
                 return;
 
-        checkPermissionOnResourceChain(perm, resource);
+        checkPermissionOnResourceChain(perm, resource, accessedColumns);
     }
 
     // Convenience method called from checkAccess method of CQLStatement
@@ -341,21 +355,48 @@ public class ClientState
         if (function.isNative())
             return;
 
-        checkPermissionOnResourceChain(permission, FunctionResource.function(function.name().keyspace,
-                                                                             function.name().name,
-                                                                             function.argTypes()));
+        checkPermissionOnResourceChain(permission,
+                                       FunctionResource.function(function.name().keyspace,
+                                                                 function.name().name,
+                                                                 function.argTypes()),
+                                       null);
     }
 
-    private void checkPermissionOnResourceChain(Permission perm, IResource resource)
+    private void checkPermissionOnResourceChain(Permission perm, IResource resource, List<ColumnDefinition> accessedColumns)
     {
+        Set<String> allowedColumns = null;
         for (IResource r : Resources.chain(resource))
-            if (authorize(r).getPermissions().contains(perm))
-                return;
+        {
+            PermissionSet permissionSet = authorize(r);
+            if (permissionSet.getPermissions().contains(perm))
+            {
+                if (resource.equals(r) && permissionSet.hasColumnConstraint(perm))
+                    allowedColumns = permissionSet.getPermissionColumns().get(perm);
+                else
+                    return;
+            }
+        }
 
-        throw new UnauthorizedException(String.format("User %s has no %s permission on %s or any of its parents",
-                                                      user.getName(),
-                                                      perm,
-                                                      resource));
+        if (allowedColumns == null) // no column constraint to evaluate => matching resource permissions were not even found
+            throw new UnauthorizedException(String.format("User %s has no %s permission on %s or any of its parents",
+                                                          user.getName(),
+                                                          perm,
+                                                          resource));
+
+        checkColumnConstraint(perm, resource, accessedColumns, allowedColumns);
+    }
+
+    private void checkColumnConstraint(Permission perm, IResource resource, List<ColumnDefinition> accessedColumns, Set<String> allowedColumns)
+    {
+        List<ColumnDefinition> rejectedColumns = accessedColumns.stream()
+                                                                .filter(c -> !allowedColumns.contains(c.name.toString()))
+                                                                .collect(Collectors.toList());
+        if (!CollectionUtils.isEmpty(rejectedColumns))
+            throw new UnauthorizedException(String.format("User %s has no %s permission on column(s) {%s} of %s",
+                                                          user.getName(),
+                                                          perm,
+                                                          ColumnDefinition.toCQLString(rejectedColumns),
+                                                          resource));
     }
 
     private void preventSystemKSSchemaModification(String keyspace, DataResource resource, Permission perm) throws UnauthorizedException
