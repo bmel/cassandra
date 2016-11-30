@@ -20,6 +20,7 @@ package org.apache.cassandra.service;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -298,13 +299,13 @@ public class ClientState
         hasAccess(keyspace, perm, DataResource.table(keyspace, columnFamily), null);
     }
 
-    public void hasColumnFamilyAccess(CFMetaData cfm, Permission perm, List<ColumnDefinition> accessedColumns)
+    public void hasColumnFamilyAccess(CFMetaData cfm, Permission perm, Collection<ColumnDefinition> accessedColumns)
     throws UnauthorizedException, InvalidRequestException
     {
         hasAccess(cfm.ksName, perm, cfm.resource, accessedColumns);
     }
 
-    private void hasAccess(String keyspace, Permission perm, DataResource resource, List<ColumnDefinition> accessedColumns)
+    private void hasAccess(String keyspace, Permission perm, DataResource resource, Collection<ColumnDefinition> accessedColumns)
     throws UnauthorizedException, InvalidRequestException
     {
         validateKeyspace(keyspace);
@@ -321,7 +322,7 @@ public class ClientState
     }
 
     /**
-     * Convenience method, redirecting to {@link #ensureHasPermission(Permission, IResource, List)}
+     * Convenience method, redirecting to {@link #ensureHasPermission(Permission, IResource, Collection)}
      * with 'null' for 'accessedColumns', for the numerous callers where column constraints
      * are not applicable.
      */
@@ -330,7 +331,7 @@ public class ClientState
         ensureHasPermission(perm, resource, null);
     }
 
-    private void ensureHasPermission(Permission perm, IResource resource, List<ColumnDefinition> accessedColumns) throws UnauthorizedException
+    private void ensureHasPermission(Permission perm, IResource resource, Collection<ColumnDefinition> accessedColumns) throws UnauthorizedException
     {
         if (!DatabaseDescriptor.getAuthorizer().requireAuthorization())
             return;
@@ -362,7 +363,7 @@ public class ClientState
                                        null);
     }
 
-    private void checkPermissionOnResourceChain(Permission perm, IResource resource, List<ColumnDefinition> accessedColumns)
+    private void checkPermissionOnResourceChain(Permission perm, IResource resource, Collection<ColumnDefinition> accessedColumns)
     {
         Set<String> allowedColumns = null;
         for (IResource r : Resources.chain(resource))
@@ -370,6 +371,10 @@ public class ClientState
             PermissionSet permissionSet = authorize(r);
             if (permissionSet.getPermissions().contains(perm))
             {
+                // Since CASSANDRA-12859 (Column-level permissions):
+                // If there is a column constraint, then remember to check column permissions AFTER this loop.
+                // Reason: if the user has the required permission on the whole keyspace or root, that's enough to
+                // pass this permission check, regardless of any column constraints on the table.
                 if (resource.equals(r) && permissionSet.hasColumnConstraint(perm))
                     allowedColumns = permissionSet.getPermissionColumns().get(perm);
                 else
@@ -386,7 +391,7 @@ public class ClientState
         checkColumnConstraint(perm, resource, accessedColumns, allowedColumns);
     }
 
-    private void checkColumnConstraint(Permission perm, IResource resource, List<ColumnDefinition> accessedColumns, Set<String> allowedColumns)
+    private void checkColumnConstraint(Permission perm, IResource resource, Collection<ColumnDefinition> accessedColumns, Set<String> allowedColumns)
     {
         List<ColumnDefinition> rejectedColumns = accessedColumns.stream()
                                                                 .filter(c -> !allowedColumns.contains(c.name.toString()))

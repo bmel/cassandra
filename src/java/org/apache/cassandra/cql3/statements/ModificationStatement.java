@@ -207,26 +207,41 @@ public abstract class ModificationStatement implements CQLStatement
 
     public void checkAccess(ClientState state) throws InvalidRequestException, UnauthorizedException
     {
-        state.hasColumnFamilyAccess(cfm, Permission.MODIFY, null);
+        Collection<ColumnDefinition> allUpdatedColumns = asUnion(this.updatedColumns);
+        if (allUpdatedColumns.isEmpty()) {
+            // Happens in DeleteStatement, when the whole row gets deleted. Permission to all columns is needed, then:
+            allUpdatedColumns = cfm.resource.getTableColumns();
+        }
+        state.hasColumnFamilyAccess(cfm, Permission.MODIFY, allUpdatedColumns);
 
         // CAS updates can be used to simulate a SELECT query, so should require Permission.SELECT as well.
         if (hasConditions())
-            state.hasColumnFamilyAccess(cfm, Permission.SELECT, null);
+            state.hasColumnFamilyAccess(cfm, Permission.SELECT, asUnion(conditionColumns));
 
         // MV updates need to get the current state from the table, and might update the views
         // Require Permission.SELECT on the base table, and Permission.MODIFY on the views
         Iterator<ViewDefinition> views = View.findAll(keyspace(), columnFamily()).iterator();
         if (views.hasNext())
         {
+            // TODO: In the context of CASSANDRA-12859 (Column-level permissions):
+            // Requires permission on which columns of the base table?
+            // None specifically? All? Just the ones that are being updated?
             state.hasColumnFamilyAccess(cfm, Permission.SELECT, null);
             do
             {
-                state.hasColumnFamilyAccess(views.next().metadata, Permission.MODIFY, null);
+                state.hasColumnFamilyAccess(views.next().metadata, Permission.MODIFY, allUpdatedColumns);
             } while (views.hasNext());
         }
 
         for (Function function : getFunctions())
             state.ensureHasPermission(Permission.EXECUTE, function);
+    }
+
+    private List<ColumnDefinition> asUnion(PartitionColumns partitionColumns)
+    {
+        List<ColumnDefinition> unifiedColumns = new ArrayList<>(partitionColumns.columns(true));
+        unifiedColumns.addAll(partitionColumns.columns(false));
+        return unifiedColumns;
     }
 
     public void validate(ClientState state) throws InvalidRequestException
