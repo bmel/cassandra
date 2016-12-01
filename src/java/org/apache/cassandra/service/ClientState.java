@@ -371,10 +371,12 @@ public class ClientState
             PermissionSet permissionSet = authorize(r);
             if (permissionSet.getPermissions().contains(perm))
             {
-                // Since CASSANDRA-12859 (Column-level permissions):
-                // If there is a column constraint, then remember to check column permissions AFTER this loop.
-                // Reason: if the user has the required permission on the whole keyspace or root, that's enough to
-                // pass this permission check, regardless of any column constraints on the table.
+                /*
+                 Since CASSANDRA-12859 (Column-level permissions):
+                 If there is a column constraint, then remember to check column permissions AFTER this loop.
+                 Reason: if the user has the required permission on the whole keyspace or root, that's enough to
+                 pass this permission check, regardless of any column constraints on the table.
+                */
                 if (resource.equals(r) && permissionSet.hasColumnConstraint(perm))
                     allowedColumns = permissionSet.getPermissionColumns().get(perm);
                 else
@@ -393,6 +395,9 @@ public class ClientState
 
     private void checkColumnConstraint(Permission perm, IResource resource, Collection<ColumnDefinition> accessedColumns, Set<String> allowedColumns)
     {
+        if (CollectionUtils.isEmpty(allowedColumns))
+            return;
+
         List<ColumnDefinition> rejectedColumns = accessedColumns.stream()
                                                                 .filter(c -> !allowedColumns.contains(c.name.toString()))
                                                                 .collect(Collectors.toList());

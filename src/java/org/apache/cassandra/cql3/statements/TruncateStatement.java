@@ -19,6 +19,7 @@ package org.apache.cassandra.cql3.statements;
 
 import java.util.concurrent.TimeoutException;
 
+import org.apache.cassandra.auth.DataResource;
 import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.Schema;
@@ -51,7 +52,15 @@ public class TruncateStatement extends CFStatement implements CQLStatement
 
     public void checkAccess(ClientState state) throws InvalidRequestException, UnauthorizedException
     {
-        state.hasColumnFamilyAccess(keyspace(), columnFamily(), Permission.MODIFY);
+        /*
+         Since CASSANDRA-12859 (Column-level permissions):
+         Truncating a table requires MODIFY permissions on ALL its columns.
+        */
+        DataResource table = DataResource.table(keyspace(), columnFamily());
+        CFMetaData cfm = Schema.instance.getCFMetaData(keyspace(), columnFamily());
+        // TODO: is there a way to get the table from its cfm or vice versa?
+
+        state.hasColumnFamilyAccess(cfm, Permission.MODIFY, table.getTableColumns());
     }
 
     public void validate(ClientState state) throws InvalidRequestException
