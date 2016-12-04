@@ -74,7 +74,7 @@ public class GrantPermissionsStatement extends PermissionsManagementStatement
                                                                             .collect(Collectors.toSet());
                     if (!missingColumns.isEmpty())
                     {
-                        throw new InvalidRequestException(String.format("Column(s) %s do not exist in table %s",
+                        throw new InvalidRequestException(String.format("Column(s) %s do not exist in %s",
                                                                         missingColumns,
                                                                         resource));
                     }

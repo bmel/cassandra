@@ -63,6 +63,7 @@ public class PermissionSet
 
     public boolean hasColumnConstraint(Permission perm)
     {
-        return CollectionUtils.isNotEmpty(permissionColumns.get(perm));
+        Set<String> cols = permissionColumns.get(perm);
+        return cols != null && !cols.isEmpty();
     }
 }

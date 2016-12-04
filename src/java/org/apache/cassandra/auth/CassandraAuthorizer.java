@@ -278,7 +278,7 @@ public class CassandraAuthorizer implements IAuthorizer
         for (Constraint constraint : Constraint.values())
         {
             Set<String> fetchedCols = result.one().getSet(constraint.columnName, UTF8Type.instance);
-            if (!CollectionUtils.isEmpty(fetchedCols)) {
+            if (fetchedCols != null && !fetchedCols.isEmpty()) {
                 permissionColumnsOut.put(constraint.getPermission(),
                                          ImmutableSet.copyOf(fetchedCols)); // Cautious copy
             }
@@ -320,7 +320,7 @@ public class CassandraAuthorizer implements IAuthorizer
         {
             String constraintColumnName = constraint.getColumnName();
             Set<ColumnIdentifier> columns = permissionSpec.getPermissionColumns().get(permission);
-            if (CollectionUtils.isEmpty(columns)) // means: no constraints on columns, for this permission
+            if (columns == null || columns.isEmpty()) // means: no constraints on columns, for this permission
             {
                 // null out column constraints for the supplied permission:
                 target.append(String.format(", %s = {}", constraintColumnName));

@@ -395,13 +395,13 @@ public class ClientState
 
     private void checkColumnConstraint(Permission perm, IResource resource, Collection<ColumnDefinition> accessedColumns, Set<String> allowedColumns)
     {
-        if (CollectionUtils.isEmpty(allowedColumns))
+        if (allowedColumns == null || allowedColumns.isEmpty())
             return;
 
         List<ColumnDefinition> rejectedColumns = accessedColumns.stream()
                                                                 .filter(c -> !allowedColumns.contains(c.name.toString()))
                                                                 .collect(Collectors.toList());
-        if (!CollectionUtils.isEmpty(rejectedColumns))
+        if (!rejectedColumns.isEmpty())
             throw new UnauthorizedException(String.format("User %s has no %s permission on column(s) {%s} of %s",
                                                           user.getName(),
                                                           perm,
