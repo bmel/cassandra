@@ -303,7 +303,7 @@ public class CassandraAuthorizer implements IAuthorizer
     private String makeConstraintClauses(PermissionSpec permissionSpec, String op)
     {
         String permsColClause = "";
-        if (!permissionSpec.getPermissionColumns().isEmpty())
+        if (hasConstrainablePermission(permissionSpec))
         {
             StringBuilder sb = new StringBuilder();
             for (Constraint constraint : Constraint.values())
@@ -311,6 +311,11 @@ public class CassandraAuthorizer implements IAuthorizer
             permsColClause = sb.toString();
         }
         return permsColClause;
+    }
+
+    private boolean hasConstrainablePermission(PermissionSpec permissionSpec)
+    {
+        return permissionSpec.getPermissions().stream().anyMatch(p -> Permission.CONSTRAINABLES.contains(p));
     }
 
     private void appendConstraintClause(PermissionSpec permissionSpec, Constraint constraint, String op, StringBuilder target)
