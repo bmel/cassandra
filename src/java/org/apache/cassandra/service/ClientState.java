@@ -21,6 +21,7 @@ import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -402,11 +403,14 @@ public class ClientState
                                                                 .filter(c -> !allowedColumns.contains(c.name.toString()))
                                                                 .collect(Collectors.toList());
         if (!rejectedColumns.isEmpty())
+        {
+            Collections.sort(rejectedColumns);
             throw new UnauthorizedException(String.format("User %s has no %s permission on column(s) {%s} of %s",
                                                           user.getName(),
                                                           perm,
                                                           ColumnDefinition.toCQLString(rejectedColumns),
                                                           resource));
+        }
     }
 
     private void preventSystemKSSchemaModification(String keyspace, DataResource resource, Permission perm) throws UnauthorizedException
