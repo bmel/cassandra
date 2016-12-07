@@ -47,9 +47,10 @@ public interface IAuthorizer
      *
      * @param user Authenticated user requesting authorization.
      * @param resource Resource for which the authorization is being requested. @see DataResource.
-     * @return Set of permissions of the user on the resource. Should never return null. Use Permission.NONE instead.
+     * @return Set of permissions (and their constraints) of the user on the resource.
+     * Should never return null. Use an empty {@link PermissionSet} instead.
      */
-    Set<Permission> authorize(AuthenticatedUser user, IResource resource);
+    PermissionSet authorize(AuthenticatedUser user, IResource resource);
 
     /**
      * Grants a set of permissions on a resource to a role.
@@ -58,16 +59,37 @@ public interface IAuthorizer
      * not support it should be sure to throw UnsupportedOperationException.
      *
      * @param performer User who grants the permissions.
-     * @param permissions Set of permissions to grant.
-     * @param resource Resource on which to grant the permissions.
-     * @param grantee Role to which the permissions are to be granted.
+     * @param permissionSpec Wrapper for permissions, resource, grantee, ....
      *
      * @throws RequestValidationException
      * @throws RequestExecutionException
      * @throws java.lang.UnsupportedOperationException
      */
-    void grant(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource grantee)
+    void grant(AuthenticatedUser performer, PermissionSpec permissionSpec)
     throws RequestValidationException, RequestExecutionException;
+
+    /**
+     * Grants a set of permissions on a resource to a role.
+     * The opposite of revoke().
+     * This method is optional and may be called internally, so implementations which do
+     * not support it should be sure to throw UnsupportedOperationException.
+     * <p>
+     * Going forward, this method may be deprecated, replacing its usages by
+     * {@link #grant(AuthenticatedUser, PermissionSpec)}
+     *
+     * @param performer   User who grants the permissions.
+     * @param permissions Set of permissions to grant.
+     * @param resource    Resource on which to grant the permissions.
+     * @param grantee     Role to which the permissions are to be granted.
+     * @throws RequestValidationException
+     * @throws RequestExecutionException
+     * @throws java.lang.UnsupportedOperationException
+     */
+    default void grant(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource grantee)
+    throws RequestValidationException, RequestExecutionException
+    {
+        grant(performer, new PermissionSpec(permissions, resource, grantee));
+    }
 
     /**
      * Revokes a set of permissions on a resource from a user.

@@ -24,6 +24,7 @@ import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,8 +61,37 @@ public class CassandraAuthorizer implements IAuthorizer
     private static final Logger logger = LoggerFactory.getLogger(CassandraAuthorizer.class);
 
     private static final String ROLE = "role";
+
     private static final String RESOURCE = "resource";
     private static final String PERMISSIONS = "permissions";
+
+    /**
+     * Enumerates constrainable {@link Permission}s and relates them to the columns in the role permission table that
+     * hold the constraining information, such as a set of table columns.
+     */
+    enum Constraint {
+        MODIFIABLE(Permission.MODIFY, "modifiable_columns"),
+        SELECTABLE(Permission.SELECT, "selectable_columns");
+
+        private final Permission permission;
+        private final String columnName;
+
+        Constraint(Permission permission, String columnName)
+        {
+            this.permission = permission;
+            this.columnName = columnName;
+        }
+
+        public Permission getPermission()
+        {
+            return permission;
+        }
+
+        public String getColumnName()
+        {
+            return columnName;
+        }
+    }
 
     // used during upgrades to perform authz on mixed clusters
     public static final String USERNAME = "username";
@@ -76,16 +106,17 @@ public class CassandraAuthorizer implements IAuthorizer
 
     // Returns every permission on the resource granted to the user either directly
     // or indirectly via roles granted to the user.
-    public Set<Permission> authorize(AuthenticatedUser user, IResource resource)
+    public PermissionSet authorize(AuthenticatedUser user, IResource resource)
     {
         if (user.isSuper())
-            return resource.applicablePermissions();
+            return new PermissionSet(resource.applicablePermissions());
 
         Set<Permission> permissions = EnumSet.noneOf(Permission.class);
+        Map<Permission, Set<String>> permissionColumns = new EnumMap<>(Permission.class);
         try
         {
             for (RoleResource role: user.getRoles())
-                addPermissionsForRole(permissions, resource, role);
+                addPermissionsForRole(permissions, permissionColumns, resource, role);
         }
         catch (RequestValidationException e)
         {
@@ -97,20 +128,20 @@ public class CassandraAuthorizer implements IAuthorizer
             throw new RuntimeException(e);
         }
 
-        return permissions;
+        return new PermissionSet(permissions, permissionColumns);
     }
 
-    public void grant(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource grantee)
+    public void grant(AuthenticatedUser performer, PermissionSpec permissionSpec)
     throws RequestValidationException, RequestExecutionException
     {
-        modifyRolePermissions(permissions, resource, grantee, "+");
-        addLookupEntry(resource, grantee);
+        modifyRolePermissions(permissionSpec, "+");
+        addLookupEntry(permissionSpec.getResource(), permissionSpec.getGrantee());
     }
 
     public void revoke(AuthenticatedUser performer, Set<Permission> permissions, IResource resource, RoleResource revokee)
     throws RequestValidationException, RequestExecutionException
     {
-        modifyRolePermissions(permissions, resource, revokee, "-");
+        modifyRolePermissions(new PermissionSpec(permissions, resource, revokee), "-");
         removeLookupEntry(resource, revokee);
     }
 
@@ -189,7 +220,6 @@ public class CassandraAuthorizer implements IAuthorizer
         catch (RequestExecutionException | RequestValidationException e)
         {
             logger.warn("CassandraAuthorizer failed to revoke all permissions on {}: {}", droppedResource, e);
-            return;
         }
     }
 
@@ -208,7 +238,10 @@ public class CassandraAuthorizer implements IAuthorizer
     }
 
     // Add every permission on the resource granted to the role
-    private void addPermissionsForRole(Set<Permission> permissions, IResource resource, RoleResource role)
+    private void addPermissionsForRole(Set<Permission> permissions,
+                                       Map<Permission, Set<String>> permissionColumns,
+                                       IResource resource,
+                                       RoleResource role)
     throws RequestExecutionException, RequestValidationException
     {
         QueryOptions options = QueryOptions.forInternalCalls(ConsistencyLevel.LOCAL_ONE,
@@ -236,20 +269,77 @@ public class CassandraAuthorizer implements IAuthorizer
             {
                 permissions.add(Permission.valueOf(perm));
             }
+            addPermissionColumns(result, permissionColumns);
+        }
+    }
+
+    private void addPermissionColumns(UntypedResultSet result, Map<Permission, Set<String>> permissionColumnsOut)
+    {
+        for (Constraint constraint : Constraint.values())
+        {
+            Set<String> fetchedCols = result.one().getSet(constraint.columnName, UTF8Type.instance);
+            if (fetchedCols != null && !fetchedCols.isEmpty()) {
+                permissionColumnsOut.put(constraint.getPermission(),
+                                         ImmutableSet.copyOf(fetchedCols)); // Cautious copy
+            }
         }
     }
 
     // Adds or removes permissions from a role_permissions table (adds if op is "+", removes if op is "-")
-    private void modifyRolePermissions(Set<Permission> permissions, IResource resource, RoleResource role, String op)
+    private void modifyRolePermissions(PermissionSpec permissionSpec, String op)
             throws RequestExecutionException
     {
-        process(String.format("UPDATE %s.%s SET permissions = permissions %s {%s} WHERE role = '%s' AND resource = '%s'",
+
+        process(String.format("UPDATE %s.%s SET permissions = permissions %s {%s} %s WHERE role = '%s' AND resource = '%s'",
                               SchemaConstants.AUTH_KEYSPACE_NAME,
                               AuthKeyspace.ROLE_PERMISSIONS,
                               op,
-                              "'" + StringUtils.join(permissions, "','") + "'",
-                              escape(role.getRoleName()),
-                              escape(resource.getName())));
+                              "'" + StringUtils.join(permissionSpec.getPermissions(), "','") + "'",
+                              makeConstraintClauses(permissionSpec, op),
+                              escape(permissionSpec.getGrantee().getRoleName()),
+                              escape(permissionSpec.getResource().getName())));
+    }
+
+    private String makeConstraintClauses(PermissionSpec permissionSpec, String op)
+    {
+        String permsColClause = "";
+        if (hasConstrainablePermission(permissionSpec))
+        {
+            StringBuilder sb = new StringBuilder();
+            for (Constraint constraint : Constraint.values())
+                appendConstraintClause(permissionSpec, constraint, op, sb);
+            permsColClause = sb.toString();
+        }
+        return permsColClause;
+    }
+
+    private boolean hasConstrainablePermission(PermissionSpec permissionSpec)
+    {
+        return permissionSpec.getPermissions().stream().anyMatch(p -> Permission.CONSTRAINABLES.contains(p));
+    }
+
+    private void appendConstraintClause(PermissionSpec permissionSpec, Constraint constraint, String op, StringBuilder target)
+    {
+        Permission permission = constraint.getPermission();
+        if (permissionSpec.getPermissions().contains(permission))
+        {
+            String constraintColumnName = constraint.getColumnName();
+            Set<ColumnIdentifier> columns = permissionSpec.getPermissionColumns().get(permission);
+            if (columns == null || columns.isEmpty()) // means: no constraints on columns, for this permission
+            {
+                // null out column constraints for the supplied permission:
+                target.append(String.format(", %s = {}", constraintColumnName));
+            }
+            else
+            {
+                // add or remove column constraints for the specified columns:
+                target.append(String.format(", %s = %s %s {%s}",
+                                            constraintColumnName,
+                                            constraintColumnName,
+                                            op,
+                                            "$$" + StringUtils.join(columns, "$$,$$") + "$$"));
+            }
+        }
     }
 
     // Removes an entry from the inverted index table (from resource -> role with defined permissions)
@@ -386,7 +476,9 @@ public class CassandraAuthorizer implements IAuthorizer
 
     private SelectStatement prepare(String entityname, String permissionsTable)
     {
-        String query = String.format("SELECT permissions FROM %s.%s WHERE %s = ? AND resource = ?",
+        String query = String.format("SELECT permissions, %s, %s FROM %s.%s WHERE %s = ? AND resource = ?",
+                                     Constraint.MODIFIABLE.getColumnName(),
+                                     Constraint.SELECTABLE.getColumnName(),
                                      SchemaConstants.AUTH_KEYSPACE_NAME,
                                      permissionsTable,
                                      entityname);

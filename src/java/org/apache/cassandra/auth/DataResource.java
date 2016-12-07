@@ -17,12 +17,14 @@
  */
 package org.apache.cassandra.auth;
 
+import java.util.Collection;
 import java.util.Set;
 
 import com.google.common.base.Objects;
 import com.google.common.collect.Sets;
 import org.apache.commons.lang3.StringUtils;
 
+import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.config.Schema;
 
 /**
@@ -214,6 +216,13 @@ public class DataResource implements IResource
                 return Schema.instance.getCFMetaData(keyspace, table) != null;
         }
         throw new AssertionError();
+    }
+
+    /**
+     * @return All columns in this resource, if it's a table. Throws IllegalStateException if it's not a table-level resource.
+     */
+    public Collection<ColumnDefinition> getTableColumns() {
+        return Schema.instance.getCFMetaData(keyspace, getTable()).getColumnMetadata().values();
     }
 
     public Set<Permission> applicablePermissions()

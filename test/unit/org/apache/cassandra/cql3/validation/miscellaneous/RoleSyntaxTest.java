@@ -23,7 +23,7 @@ import org.apache.cassandra.cql3.CQLTester;
 
 public class RoleSyntaxTest extends CQLTester
 {
-    private final String NO_QUOTED_USERNAME = "Quoted strings are are not supported for user names " +
+    private final static String NO_QUOTED_USERNAME = "Quoted strings are are not supported for user names " +
                                               "and USER is deprecated, please use ROLE";
     @Test
     public void standardOptionsSyntaxTest() throws Throwable
@@ -124,6 +124,33 @@ public class RoleSyntaxTest extends CQLTester
         assertValidSyntax("REVOKE SELECT ON KEYSPACE ks FROM 'r1'");
         assertValidSyntax("REVOKE SELECT ON KEYSPACE ks FROM \"r1\"");
         assertValidSyntax("REVOKE SELECT ON KEYSPACE ks FROM $$ r '1' $$");
+
+        // grant on DataResource that's a table
+        assertValidSyntax("GRANT SELECT ON ks.t1 TO r1");
+        assertValidSyntax("GRANT SELECT ON t1 TO r1");
+        assertInvalidSyntax("GRANT SELECT, MODIFY ON t1 TO r1"); // In CQL, still no multiple permissions per GRANT, except if specifying 'ALL'
+        assertInvalidSyntax("GRANT EXECUTE ON ks.t1 TO r1");
+
+        // grant on DataResource that's a table, with columns
+        assertValidSyntax("GRANT SELECT(c1) ON ks.t1 TO r1");
+        assertValidSyntax("GRANT SELECT(c1) ON TABLE ks.t1 TO r1");
+        assertValidSyntax("GRANT SELECT(c1) ON t1 TO r1");
+        assertValidSyntax("GRANT SELECT(c1,c2) ON ks.t1 TO r1");
+        assertValidSyntax("GRANT SELECT(c1,c2 , c3) ON ks.t1 TO r1");
+        assertValidSyntax("GRANT MODIFY(c1) ON ks.t1 TO r1");
+
+        assertInvalidSyntax("GRANT MODIFY() ON ks.t1 TO r1"); // empty column list with parentheses
+
+        // attempt to grant with columns on a permission where columns are not applicable
+        assertInvalidSyntax("GRANT EXECUTE(c1) ON ks.t1 TO r1");
+    }
+
+    //@Test // TODO Enable and complete when unit test framework allows to create roles and assign permissions
+    public void grantColumnPermissionsTest() throws Throwable
+    {
+        createTable("CREATE TABLE %s (key text PRIMARY KEY, c1 text, c2 text)");
+        execute("GRANT SELECT(c1) ON %s TO r1");
+        assertInvalidMessage("todo", "GRANT SELECT(nosuchcolumn) ON %s TO r1");
     }
 
     @Test
