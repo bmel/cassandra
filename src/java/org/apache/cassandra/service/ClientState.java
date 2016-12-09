@@ -377,6 +377,7 @@ public class ClientState
                  If there is a column constraint, then remember to check column permissions AFTER this loop.
                  Reason: if the user has the required permission on the whole keyspace or root, that's enough to
                  pass this permission check, regardless of any column constraints on the table.
+                 Note: since only tables can have column constraints, no need to 'gather' them for multiple IResources.
                 */
                 if (resource.equals(r) && permissionSet.hasColumnConstraint(perm))
                     allowedColumns = permissionSet.getPermissionColumns().get(perm);

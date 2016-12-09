@@ -279,8 +279,13 @@ public class CassandraAuthorizer implements IAuthorizer
         {
             Set<String> fetchedCols = result.one().getSet(constraint.columnName, UTF8Type.instance);
             if (fetchedCols != null && !fetchedCols.isEmpty()) {
-                permissionColumnsOut.put(constraint.getPermission(),
-                                         ImmutableSet.copyOf(fetchedCols)); // Cautious copy
+                Set<String> cols = permissionColumnsOut.get(constraint.getPermission());
+                if (cols == null)
+                {
+                    cols = new HashSet<>();
+                    permissionColumnsOut.put(constraint.getPermission(), cols);
+                }
+                cols.addAll(fetchedCols);
             }
         }
     }
