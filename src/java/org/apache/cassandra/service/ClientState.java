@@ -397,7 +397,7 @@ public class ClientState
 
     private void checkColumnConstraint(Permission perm, IResource resource, Collection<ColumnDefinition> accessedColumns, Set<String> allowedColumns)
     {
-        if (allowedColumns == null || allowedColumns.isEmpty())
+        if (allowedColumns == null || allowedColumns.isEmpty() || accessedColumns == null || accessedColumns.isEmpty())
             return;
 
         List<ColumnDefinition> rejectedColumns = accessedColumns.stream()

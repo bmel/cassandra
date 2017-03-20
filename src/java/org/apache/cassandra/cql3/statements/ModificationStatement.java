@@ -226,7 +226,7 @@ public abstract class ModificationStatement implements CQLStatement
             // TODO: In the context of CASSANDRA-12859 (Column-level permissions):
             // Requires permission on which columns of the base table?
             // None specifically? All? Just the ones that are being updated?
-            state.hasColumnFamilyAccess(cfm, Permission.SELECT, null);
+            state.hasColumnFamilyAccess(cfm, Permission.SELECT, allUpdatedColumns);
             do
             {
                 state.hasColumnFamilyAccess(views.next().metadata, Permission.MODIFY, allUpdatedColumns);
